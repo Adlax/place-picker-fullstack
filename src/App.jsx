@@ -1,17 +1,41 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 
 import Places from "./components/Places.jsx";
 import Modal from "./components/Modal.jsx";
 import DeleteConfirmation from "./components/DeleteConfirmation.jsx";
 import logoImg from "./assets/logo.png";
 import AvailablePlaces from "./components/AvailablePlaces.jsx";
+import { updateUserPlaces } from "./http.js";
+import Error from "./components/Error.jsx";
 
 function App() {
 	const selectedPlace = useRef();
 
 	const [userPlaces, setUserPlaces] = useState([]);
-
+	const [isFetching, setIsFetching] = useState(false);
+	const [error, setError] = useState();
 	const [modalIsOpen, setModalIsOpen] = useState(false);
+	const [errorPlacesUpdate, setErrorPlacesUpdate] = useState();
+
+	const fetchExistingPlaces = async () => {
+		setIsFetching(true);
+		try {
+			const response = await fetch("http://localhost:3000/user-places");
+			const result = await response.json();
+			if (!response.ok) {
+				throw new Error("Big caca while fetching fav places");
+			}
+			console.log(result.places);
+			setUserPlaces(result.places);
+		} catch (error) {
+			setError({ message: error.message || "Fetch to find fav places" });
+		}
+		setIsFetching(false);
+	};
+
+	useEffect(() => {
+		fetchExistingPlaces();
+	}, []);
 
 	function handleStartRemovePlace(place) {
 		setModalIsOpen(true);
@@ -22,7 +46,8 @@ function App() {
 		setModalIsOpen(false);
 	}
 
-	function handleSelectPlace(selectedPlace) {
+	async function handleSelectPlace(selectedPlace) {
+		// the UI
 		setUserPlaces((prevPickedPlaces) => {
 			if (!prevPickedPlaces) {
 				prevPickedPlaces = [];
@@ -32,16 +57,42 @@ function App() {
 			}
 			return [selectedPlace, ...prevPickedPlaces];
 		});
+		// the backend
+		try {
+			await updateUserPlaces([selectedPlace, ...userPlaces]);
+		} catch (error) {
+			console.log(error);
+			setUserPlaces(userPlaces);
+			setErrorPlacesUpdate({ message: error.message || "Failed to update picked places" });
+		}
 	}
 
-	const handleRemovePlace = useCallback(async function handleRemovePlace() {
-		setUserPlaces((prevPickedPlaces) => prevPickedPlaces.filter((place) => place.id !== selectedPlace.current.id));
+	const handleRemovePlace = useCallback(
+		async function handleRemovePlace() {
+			// the UI
+			setUserPlaces((prevPickedPlaces) => prevPickedPlaces.filter((place) => place.id !== selectedPlace.current.id));
+			// the backend
+			try {
+				await updateUserPlaces(userPlaces.filter((place) => place.id !== selectedPlace.current.id));
+			} catch (error) {
+				setUserPlaces(userPlaces);
+				setErrorPlacesUpdate({ message: error.message || "Failed to delete picked places" });
+			}
+			setModalIsOpen(false);
+		},
+		[userPlaces]
+	);
 
-		setModalIsOpen(false);
-	}, []);
+	const handleError = () => {
+		setErrorPlacesUpdate(null);
+	};
 
 	return (
 		<>
+			<Modal open={errorPlacesUpdate} onClose={handleError}>
+				{errorPlacesUpdate && <Error title="Error occurred" message={errorPlacesUpdate.message} onConfirm={handleError} />}
+			</Modal>
+
 			<Modal open={modalIsOpen} onClose={handleStopRemovePlace}>
 				<DeleteConfirmation onCancel={handleStopRemovePlace} onConfirm={handleRemovePlace} />
 			</Modal>
@@ -51,14 +102,19 @@ function App() {
 				<h1>PlacePicker</h1>
 				<p>Create your personal collection of places you would like to visit or you have visited.</p>
 			</header>
-			<main>
-				<Places
-					title="I'd like to visit ..."
-					fallbackText="Select the places you would like to visit below."
-					places={userPlaces}
-					onSelectPlace={handleStartRemovePlace}
-				/>
 
+			<main>
+				{error && <Error title="An error occurred" message={error.message} />}
+				{!error && (
+					<Places
+						title="I'd like to visit ..."
+						fallbackText="Select the places you would like to visit below."
+						places={userPlaces}
+						onSelectPlace={handleStartRemovePlace}
+						isLoading={isFetching}
+						loadingText="Fetching your places..."
+					/>
+				)}
 				<AvailablePlaces onSelectPlace={handleSelectPlace} />
 			</main>
 		</>
